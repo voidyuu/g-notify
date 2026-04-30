@@ -2,7 +2,8 @@ const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const API_ROOT = "https://www.googleapis.com";
 const POLL_ALARM = "g-notify:poll";
-const ICON_URL = chrome.runtime.getURL("icons/icon-128.png");
+const GMAIL_ICON_URL = chrome.runtime.getURL("icons/services/gmail.png");
+const CALENDAR_ICON_URL = chrome.runtime.getURL("icons/services/calendar.png");
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
@@ -217,7 +218,7 @@ async function notifyGmailMessage(token, messageId) {
 
   await createNotification(`gmail:${message.id}`, {
     type: "basic",
-    iconUrl: ICON_URL,
+    iconUrl: GMAIL_ICON_URL,
     title: `New mail: ${subject}`,
     message: truncate(`${from}${snippet ? ` - ${snippet}` : ""}`, 180),
     priority: 1
@@ -229,7 +230,7 @@ async function pollCalendar(token, settings, state) {
   const pollIntervalMinutes = Number(settings.pollIntervalMinutes) || DEFAULT_SETTINGS.pollIntervalMinutes;
   const calendarDefaults = await getPrimaryCalendarDefaults(token);
   const defaultReminderMinutes = getEarliestPopupReminderMinutes(calendarDefaults);
-  const lookAheadMinutes = Math.max(defaultReminderMinutes + pollIntervalMinutes, 24 * 60);
+  const lookAheadMinutes = Math.max((defaultReminderMinutes ?? 0) + pollIntervalMinutes, 24 * 60);
   const timeMax = new Date(now.getTime() + lookAheadMinutes * 60 * 1000);
 
   const response = await googleFetch(token, "/calendar/v3/calendars/primary/events", {
@@ -288,7 +289,7 @@ async function notifyCalendarEvent(event, startsAt) {
 
   await createNotification(`calendar:${event.id}:${startsAt.toISOString()}`, {
     type: "basic",
-    iconUrl: ICON_URL,
+    iconUrl: CALENDAR_ICON_URL,
     title: `Upcoming: ${title}`,
     message: `${time}${location}`,
     priority: 1
