@@ -95,6 +95,12 @@ async function handleMessage(message) {
     case "pollNow":
       await pollAll({ interactive: true, reason: "manual" });
       return getStatus();
+    case "testGmailNotification":
+      await createTestGmailNotification();
+      return getStatus();
+    case "testCalendarNotification":
+      await createTestCalendarNotification();
+      return getStatus();
     case "saveSettings":
       await saveSettings(message.settings);
       return getStatus();
@@ -292,6 +298,26 @@ async function notifyCalendarEvent(event, startsAt) {
     iconUrl: CALENDAR_ICON_URL,
     title: `Upcoming: ${title}`,
     message: `${time}${location}`,
+    priority: 1
+  });
+}
+
+async function createTestGmailNotification() {
+  await createNotification(`gmail:test:${Date.now()}`, {
+    type: "basic",
+    iconUrl: GMAIL_ICON_URL,
+    title: "New mail: Test notification",
+    message: "This is a sample Gmail notification from G Notify.",
+    priority: 1
+  });
+}
+
+async function createTestCalendarNotification() {
+  await createNotification(`calendar:test:${Date.now()}`, {
+    type: "basic",
+    iconUrl: CALENDAR_ICON_URL,
+    title: "Upcoming: Test event",
+    message: "This is a sample Calendar notification from G Notify.",
     priority: 1
   });
 }

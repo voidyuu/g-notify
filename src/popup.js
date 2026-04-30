@@ -3,6 +3,8 @@ const statusDot = document.querySelector("#statusDot");
 const connectButton = document.querySelector("#connectButton");
 const pollButton = document.querySelector("#pollButton");
 const signOutButton = document.querySelector("#signOutButton");
+const testGmailButton = document.querySelector("#testGmailButton");
+const testCalendarButton = document.querySelector("#testCalendarButton");
 const summaryText = document.querySelector("#summaryText");
 const summaryNote = document.querySelector("#summaryNote");
 const oauthFields = document.querySelector("#oauthFields");
@@ -22,6 +24,8 @@ let lastNoteIsError = false;
 connectButton.addEventListener("click", () => runAction("signIn", "Connected.", { settings: readSettings() }));
 pollButton.addEventListener("click", () => runAction("pollNow", "Poll complete."));
 signOutButton.addEventListener("click", () => runAction("signOut", "Signed out."));
+testGmailButton.addEventListener("click", () => runAction("testGmailNotification", "Gmail test notification sent."));
+testCalendarButton.addEventListener("click", () => runAction("testCalendarNotification", "Calendar test notification sent."));
 statusDot.addEventListener("click", () => updateEnabled(!lastEnabled));
 oauthClientIdInput.addEventListener("input", () => scheduleAutoSave());
 oauthClientSecretInput.addEventListener("input", () => scheduleAutoSave());
@@ -132,7 +136,7 @@ function readSettings() {
 
 function setBusy(isBusy) {
   if (isBusy) {
-    for (const element of [connectButton, pollButton, signOutButton, statusDot]) {
+    for (const element of [connectButton, pollButton, signOutButton, testGmailButton, testCalendarButton, statusDot]) {
       element.disabled = true;
     }
     return;
@@ -141,6 +145,8 @@ function setBusy(isBusy) {
   connectButton.disabled = lastHasToken;
   pollButton.disabled = !lastHasToken || !lastEnabled;
   signOutButton.disabled = !lastHasToken;
+  testGmailButton.disabled = false;
+  testCalendarButton.disabled = false;
   statusDot.disabled = false;
 }
 

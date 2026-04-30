@@ -165,6 +165,19 @@ button.ghost:hover {
   background: #f9d8d3;
 }
 
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.buttonIcon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
 .hiddenAction {
   display: none;
 }
