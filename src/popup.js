@@ -1,4 +1,3 @@
-const statusText = document.querySelector("#statusText");
 const statusDot = document.querySelector("#statusDot");
 const connectButton = document.querySelector("#connectButton");
 const pollButton = document.querySelector("#pollButton");
@@ -12,10 +11,18 @@ const oauthFields = document.querySelector("#oauthFields");
 const oauthClientIdInput = document.querySelector("#oauthClientIdInput");
 const oauthClientSecretInput = document.querySelector("#oauthClientSecretInput");
 const redirectUriInput = document.querySelector("#redirectUriInput");
+const gmailEnabledInput = document.querySelector("#gmailEnabledInput");
+const calendarEnabledInput = document.querySelector("#calendarEnabledInput");
 const pollIntervalInput = document.querySelector("#pollIntervalInput");
 const gmailQueryInput = document.querySelector("#gmailQueryInput");
+const tabButtons = document.querySelectorAll("[data-tab]");
+const tabPanels = document.querySelectorAll("[data-tab-panel]");
+const gmailTabStatus = document.querySelector("#gmailTabStatus");
+const calendarTabStatus = document.querySelector("#calendarTabStatus");
 let lastHasToken = false;
 let lastEnabled = true;
+let lastGmailEnabled = true;
+let lastCalendarEnabled = true;
 let saveTimer = null;
 let isRendering = false;
 let lastNote = "";
@@ -29,8 +36,15 @@ testCalendarButton.addEventListener("click", () => runAction("testCalendarNotifi
 statusDot.addEventListener("click", () => updateEnabled(!lastEnabled));
 oauthClientIdInput.addEventListener("input", () => scheduleAutoSave());
 oauthClientSecretInput.addEventListener("input", () => scheduleAutoSave());
+gmailEnabledInput.addEventListener("change", () => scheduleAutoSave());
+calendarEnabledInput.addEventListener("change", () => scheduleAutoSave());
+gmailEnabledInput.addEventListener("change", () => updateTabStatusIndicators());
+calendarEnabledInput.addEventListener("change", () => updateTabStatusIndicators());
 pollIntervalInput.addEventListener("input", () => scheduleAutoSave());
 gmailQueryInput.addEventListener("input", () => scheduleAutoSave());
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => selectTab(button.dataset.tab));
+});
 
 renderInitialStatus();
 refreshStatus();
@@ -66,7 +80,6 @@ async function sendMessage(message) {
 }
 
 function renderInitialStatus() {
-  statusText.textContent = "Checking Google connection...";
   statusDot.className = "dot";
   summaryText.textContent = "No sync yet.";
   setSummaryNote("");
@@ -79,31 +92,42 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri }) {
     oauthClientIdInput.value = settings.oauthClientId;
     oauthClientSecretInput.value = settings.oauthClientSecret;
     redirectUriInput.value = redirectUri || "";
+    gmailEnabledInput.checked = settings.gmailEnabled;
+    calendarEnabledInput.checked = settings.calendarEnabled;
+    updateTabStatusIndicators();
     pollIntervalInput.value = settings.pollIntervalMinutes;
     gmailQueryInput.value = settings.gmailQuery;
     lastEnabled = settings.enabled;
+    lastGmailEnabled = settings.gmailEnabled;
+    lastCalendarEnabled = settings.calendarEnabled;
 
     connectButton.classList.toggle("hiddenAction", hasToken);
     signOutButton.classList.toggle("hiddenAction", !hasToken);
     connectButton.disabled = hasToken;
-    pollButton.disabled = !hasToken || !settings.enabled;
+    pollButton.disabled = !hasToken || !settings.enabled || !hasEnabledService();
     signOutButton.disabled = !hasToken;
+    testGmailButton.disabled = !settings.gmailEnabled;
+    testCalendarButton.disabled = !settings.calendarEnabled;
     lastHasToken = hasToken;
     oauthFields.classList.toggle("hidden", hasToken);
+    gmailQueryInput.disabled = !settings.gmailEnabled;
 
-    const alarmText = nextAlarm?.scheduledTime ? ` Next poll ${formatTime(nextAlarm.scheduledTime)}.` : "";
+    const connectionNote = buildConnectionNote(hasToken, nextAlarm);
     if (!settings.enabled) {
-      statusText.textContent = hasToken ? "Plugin paused." : "Plugin paused before sign-in.";
       renderStatusDot({ enabled: false, hasError: false });
       summaryText.textContent = buildSummary(settings, state, hasToken);
       syncSummaryNoteFromState(state);
       return;
     }
 
+    if (!hasEnabledService()) {
+      renderStatusDot({ enabled: true, hasError: false });
+      summaryText.textContent = buildSummary(settings, state, hasToken);
+      syncSummaryNoteFromState(state);
+      return;
+    }
+
     if (state.lastError) {
-      statusText.textContent = hasToken
-        ? `Connected, but sync needs attention: ${state.lastError}`
-        : `Needs attention: ${state.lastError}`;
       renderStatusDot({ enabled: true, hasError: true });
       summaryText.textContent = buildSummary(settings, state, hasToken);
       syncSummaryNoteFromState(state);
@@ -111,15 +135,13 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri }) {
     }
 
     if (hasToken) {
-      statusText.textContent = `Connected.${alarmText}`;
       renderStatusDot({ enabled: true, hasError: false });
     } else {
-      statusText.textContent = "Connect Google to start polling.";
       renderStatusDot({ enabled: true, hasError: false });
     }
 
     summaryText.textContent = buildSummary(settings, state, hasToken);
-    syncSummaryNoteFromState(state);
+    syncSummaryNoteFromState(state, connectionNote);
   } finally {
     isRendering = false;
   }
@@ -128,6 +150,8 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri }) {
 function readSettings() {
   const settings = {
     enabled: lastEnabled,
+    gmailEnabled: gmailEnabledInput.checked,
+    calendarEnabled: calendarEnabledInput.checked,
     pollIntervalMinutes: Number(pollIntervalInput.value),
     gmailQuery: gmailQueryInput.value
   };
@@ -149,10 +173,10 @@ function setBusy(isBusy) {
   }
 
   connectButton.disabled = lastHasToken;
-  pollButton.disabled = !lastHasToken || !lastEnabled;
+  pollButton.disabled = !lastHasToken || !lastEnabled || !hasEnabledService();
   signOutButton.disabled = !lastHasToken;
-  testGmailButton.disabled = false;
-  testCalendarButton.disabled = false;
+  testGmailButton.disabled = !lastGmailEnabled;
+  testCalendarButton.disabled = !lastCalendarEnabled;
   statusDot.disabled = false;
 }
 
@@ -168,14 +192,22 @@ function buildSummary(settings, state, hasToken) {
     return hasToken ? "Plugin is paused. Background checks and notifications are off." : "Plugin is paused.";
   }
 
+  if (!settings.gmailEnabled && !settings.calendarEnabled) {
+    return "Gmail and Calendar checks are off.";
+  }
+
   if (!state.lastPollAt) {
-    return hasToken ? "Signed in. No sync yet." : "No sync yet.";
+    const serviceText = buildEnabledServicesText(settings);
+    return hasToken ? `Signed in. ${serviceText} ready. No sync yet.` : `${serviceText} ready. No sync yet.`;
   }
 
   const parts = [
-    `Unread estimate: ${state.unreadEstimate || 0}`,
+    `Services: ${buildEnabledServicesText(settings)}`,
     `Last sync ${formatTime(state.lastPollAt)}`
   ];
+  if (settings.gmailEnabled) {
+    parts.splice(1, 0, `Unread estimate: ${state.unreadEstimate || 0}`);
+  }
   return parts.join(" | ");
 }
 
@@ -188,6 +220,15 @@ function buildFeedback(type, response, fallback) {
   return fallback;
 }
 
+function buildConnectionNote(hasToken, nextAlarm) {
+  if (!hasToken) {
+    return "";
+  }
+
+  const alarmText = nextAlarm?.scheduledTime ? ` Next poll ${formatTime(nextAlarm.scheduledTime)}.` : "";
+  return `Connected.${alarmText}`;
+}
+
 async function updateEnabled(enabled) {
   if (lastEnabled === enabled) {
     return;
@@ -198,6 +239,34 @@ async function updateEnabled(enabled) {
   await runAction("saveSettings", enabled ? "Plugin enabled." : "Plugin paused.", {
     settings: readSettings()
   });
+}
+
+function hasEnabledService() {
+  return lastGmailEnabled || lastCalendarEnabled;
+}
+
+function buildEnabledServicesText(settings) {
+  if (settings.gmailEnabled && settings.calendarEnabled) {
+    return "Gmail and Calendar";
+  }
+
+  return settings.gmailEnabled ? "Gmail" : "Calendar";
+}
+
+function selectTab(tabName) {
+  tabButtons.forEach((button) => {
+    const isSelected = button.dataset.tab === tabName;
+    button.setAttribute("aria-selected", String(isSelected));
+  });
+
+  tabPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.tabPanel !== tabName;
+  });
+}
+
+function updateTabStatusIndicators() {
+  gmailTabStatus.classList.toggle("enabled", gmailEnabledInput.checked);
+  calendarTabStatus.classList.toggle("enabled", calendarEnabledInput.checked);
 }
 
 function scheduleAutoSave() {
@@ -239,11 +308,17 @@ function setSummaryNote(message, isError = false) {
   summaryNote.classList.toggle("error", lastNoteIsError);
 }
 
-function syncSummaryNoteFromState(state) {
+function syncSummaryNoteFromState(state, fallback = "") {
   if (state.lastError) {
     setSummaryNote(state.lastError, true);
     return;
   }
 
-  setSummaryNote(lastNote, lastNoteIsError);
+  if (lastNote) {
+    setSummaryNote(lastNote, lastNoteIsError);
+    return;
+  }
+
+  summaryNote.textContent = fallback;
+  summaryNote.classList.toggle("error", false);
 }

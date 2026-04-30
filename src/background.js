@@ -14,6 +14,8 @@ const DEFAULT_SETTINGS = {
   oauthClientId: "",
   oauthClientSecret: "",
   enabled: true,
+  gmailEnabled: true,
+  calendarEnabled: true,
   pollIntervalMinutes: 5,
   gmailQuery: "in:inbox is:unread newer_than:7d",
   maxGmailResults: 10
@@ -173,24 +175,42 @@ async function pollAll({ interactive, reason, token: providedToken = null, throw
     return { ok: true, skipped: true };
   }
 
+  if (!settings.gmailEnabled && !settings.calendarEnabled) {
+    await setState({
+      ...(await getState()),
+      lastError: null
+    });
+    await updateBadge();
+    return { ok: true, skipped: true };
+  }
+
   let partialErrors = [];
   let pollResult = { ok: true, error: null };
 
   try {
     const token = providedToken || await getAuthToken({ interactive });
     const state = await getState();
-    const gmailResult = await pollGmail(token, settings, state);
-    partialErrors = gmailResult.errors ?? [];
-    await setState({
-      ...gmailResult.state,
-      lastError: partialErrors.length > 0 ? partialErrors.join(" ") : null
-    });
+    let nextState = state;
 
-    const calendarResult = await pollCalendar(token, settings, gmailResult.state);
+    if (settings.gmailEnabled) {
+      const gmailResult = await pollGmail(token, settings, state);
+      partialErrors = gmailResult.errors ?? [];
+      nextState = gmailResult.state;
+      await setState({
+        ...nextState,
+        lastError: partialErrors.length > 0 ? partialErrors.join(" ") : null
+      });
+    }
+
+    if (settings.calendarEnabled) {
+      const calendarResult = await pollCalendar(token, settings, nextState);
+      nextState = calendarResult.state;
+    }
+
     const lastError = partialErrors.length > 0 ? partialErrors.join(" ") : null;
 
     await setState({
-      ...calendarResult.state,
+      ...nextState,
       lastError,
       lastPollAt: new Date().toISOString()
     });
@@ -667,8 +687,8 @@ function pruneNotificationTargets(targets) {
 }
 
 async function updateBadge() {
-  const state = await getState();
-  const text = state.lastError ? "!" : state.unreadEstimate ? String(Math.min(state.unreadEstimate, 99)) : "";
+  const [settings, state] = await Promise.all([getSettings(), getState()]);
+  const text = state.lastError ? "!" : settings.gmailEnabled && state.unreadEstimate ? String(Math.min(state.unreadEstimate, 99)) : "";
   await chrome.action.setBadgeBackgroundColor({ color: state.lastError ? "#d92d20" : "#1a73e8" });
   await chrome.action.setBadgeText({ text });
 }
@@ -692,6 +712,8 @@ function sanitizeSettings(settings) {
     oauthClientId: String(settings.oauthClientId || "").trim(),
     oauthClientSecret: String(settings.oauthClientSecret || "").trim(),
     enabled: Boolean(settings.enabled),
+    gmailEnabled: settings.gmailEnabled !== false,
+    calendarEnabled: settings.calendarEnabled !== false,
     pollIntervalMinutes: Math.max(0.5, Number(settings.pollIntervalMinutes) || DEFAULT_SETTINGS.pollIntervalMinutes),
     gmailQuery: String(settings.gmailQuery || DEFAULT_SETTINGS.gmailQuery).trim(),
     maxGmailResults: Math.max(1, Math.min(50, Number(settings.maxGmailResults) || DEFAULT_SETTINGS.maxGmailResults))

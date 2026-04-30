@@ -43,12 +43,6 @@ p {
   margin: 0;
 }
 
-#statusText {
-  color: #667085;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .summary {
   padding: 10px 12px;
   border: 1px solid #d0d5dd;
@@ -64,14 +58,21 @@ p {
 }
 
 .summaryNote {
-  margin-top: 6px;
   color: #475467;
   font-size: 12px;
   line-height: 1.4;
 }
 
+#summaryText {
+  margin-top: 6px;
+}
+
 .summaryNote:empty {
   display: none;
+}
+
+.summaryNote:empty + #summaryText {
+  margin-top: 0;
 }
 
 .summaryNote.error {
@@ -228,16 +229,141 @@ input[type="text"] {
   background: #fff;
 }
 
+.tabs {
+  display: grid;
+  gap: 10px;
+}
+
+.tabList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #d0d5dd;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.tabButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  border-radius: 5px;
+  color: #475467;
+  background: transparent;
+}
+
+.tabButton:hover {
+  background: #eef4ff;
+}
+
+.tabButton[aria-selected="true"] {
+  color: #fff;
+  background: #1a73e8;
+}
+
+.tabIcon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.tabStatus {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #98a2b3;
+  box-shadow: 0 0 0 2px rgba(152, 162, 179, 0.18);
+}
+
+.tabStatus.enabled {
+  background: #2e7d32;
+  box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.18);
+}
+
+.tabButton[aria-selected="true"] .tabStatus {
+  background: #e4e7ec;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.78);
+}
+
+.tabButton[aria-selected="true"] .tabStatus.enabled {
+  background: #12b76a;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.86);
+}
+
+.tabPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.tabPanel[hidden] {
+  display: none;
+}
+
+.serviceAction {
+  width: 100%;
+}
+
 .toggle {
   display: flex;
   align-items: center;
   gap: 8px;
   color: #18212f;
+  cursor: pointer;
   font-size: 13px;
   font-weight: 600;
 }
 
 .toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggleSwitch {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #98a2b3;
+  transition: background 140ms ease;
+}
+
+.toggleSwitch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
   width: 16px;
   height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.22);
+  content: "";
+  transition: transform 140ms ease;
+}
+
+.toggle input:checked + .toggleSwitch {
+  background: #1a73e8;
+}
+
+.toggle input:checked + .toggleSwitch::after {
+  transform: translateX(14px);
+}
+
+.toggle input:focus-visible + .toggleSwitch {
+  outline: 2px solid #1a73e8;
+  outline-offset: 3px;
+}
+
+.toggle input:disabled + .toggleSwitch {
+  opacity: 0.58;
+}
+
+.toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
