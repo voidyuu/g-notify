@@ -1,8 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="G Notify icon">
-  <rect width="128" height="128" rx="24" fill="#f7f9fc"/>
-  <path d="M30 43h68v46H30z" fill="#fff" stroke="#1a73e8" stroke-width="8" stroke-linejoin="round"/>
-  <path d="M32 45l32 25 32-25" fill="none" stroke="#34a853" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="92" cy="34" r="22" fill="#ea4335"/>
-  <path d="M92 22v14" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
-  <circle cx="92" cy="48" r="4" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="G Notify">
+  <path fill="#3f5f90" d="M32 8.5a4.5 4.5 0 0 0-4.34 3.34C21.27 13.74 16.6 19.68 16.6 26.7v6.5c0 3.46-1.26 6.8-3.55 9.4l-1.94 2.2A2.75 2.75 0 0 0 13.17 49h37.66a2.75 2.75 0 0 0 2.06-4.2l-1.94-2.2a14.19 14.19 0 0 1-3.55-9.4v-6.5c0-7.02-4.67-12.96-11.06-14.86A4.5 4.5 0 0 0 32 8.5Z"/>
+  <path fill="#3f5f90" d="M24.7 51.3c1.15 3.2 3.92 5.2 7.3 5.2s6.15-2 7.3-5.2H24.7Z"/>
+  <circle cx="47" cy="17" r="8" fill="#ffffff"/>
+  <circle cx="47" cy="17" r="5.8" fill="#e8513c"/>
 </svg>
