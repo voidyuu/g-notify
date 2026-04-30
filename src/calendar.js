@@ -4,30 +4,72 @@ import { DEFAULT_SETTINGS } from "./settings.js";
 
 const CALENDAR_ICON_URL = chrome.runtime.getURL("icons/services/calendar.png");
 
+export async function listCalendars(token) {
+  const response = await googleFetch(token, "/calendar/v3/users/me/calendarList", {
+    minAccessRole: "reader",
+    maxResults: "250",
+    fields: "items(id,summary,primary,selected,accessRole,backgroundColor)"
+  });
+
+  return (response.items ?? []).map((calendar) => ({
+    id: calendar.primary ? "primary" : calendar.id,
+    summary: calendar.summary || calendar.id,
+    primary: Boolean(calendar.primary),
+    selected: calendar.selected !== false,
+    accessRole: calendar.accessRole || "",
+    backgroundColor: calendar.backgroundColor || ""
+  }));
+}
+
 export async function pollCalendar(token, settings, state) {
   const now = new Date();
   const pollIntervalMinutes = Number(settings.pollIntervalMinutes) || DEFAULT_SETTINGS.pollIntervalMinutes;
-  const calendarDefaults = await getPrimaryCalendarDefaults(token);
-  const defaultReminderMinutes = getEarliestPopupReminderMinutes(calendarDefaults);
+  const calendarIds = getSelectedCalendarIds(settings);
+  if (calendarIds.length === 0) {
+    return {
+      state: {
+        ...state,
+        lastCalendarPollAt: new Date().toISOString()
+      }
+    };
+  }
+
+  const calendarDefaultsById = new Map();
+  for (const calendarId of calendarIds) {
+    calendarDefaultsById.set(calendarId, await getCalendarDefaults(token, calendarId));
+  }
+
+  const defaultReminderMinutes = getEarliestDefaultReminderMinutes([...calendarDefaultsById.values()]);
   const lookAheadMinutes = Math.max((defaultReminderMinutes ?? 0) + pollIntervalMinutes, 24 * 60);
   const timeMax = new Date(now.getTime() + lookAheadMinutes * 60 * 1000);
+  const eventResponses = await Promise.all(calendarIds.map(async (calendarId) => {
+    const response = await googleFetch(token, `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
+      timeMin: now.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "50",
+      fields: "items(id,summary,location,start,end,htmlLink,status,reminders)"
+    });
 
-  const response = await googleFetch(token, "/calendar/v3/calendars/primary/events", {
-    timeMin: now.toISOString(),
-    timeMax: timeMax.toISOString(),
-    singleEvents: "true",
-    orderBy: "startTime",
-    maxResults: "50",
-    fields: "items(id,summary,location,start,end,htmlLink,status,reminders)"
-  });
+    return {
+      calendarId,
+      items: response.items ?? []
+    };
+  }));
 
   const notifiedKeys = new Set(state.notifiedCalendarKeys);
-  const upcomingEvents = (response.items ?? [])
-    .filter((event) => event.status !== "cancelled")
-    .map((event) => ({
+  const upcomingEvents = eventResponses
+    .flatMap(({ calendarId, items }) => items.map((event) => ({
+      calendarId,
+      event
+    })))
+    .filter(({ event }) => event.status !== "cancelled")
+    .map(({ calendarId, event }) => ({
+      calendarId,
       event,
       startsAt: getEventStart(event),
-      reminderMinutes: getEventReminderMinutes(event, calendarDefaults)
+      reminderMinutes: getEventReminderMinutes(event, calendarDefaultsById.get(calendarId) ?? [])
     }))
     .filter(({ startsAt, reminderMinutes }) => {
       if (!startsAt || reminderMinutes === null || reminderMinutes < 0) {
@@ -38,10 +80,10 @@ export async function pollCalendar(token, settings, state) {
       return startsAt >= now && startsAt.getTime() - now.getTime() <= effectiveReminderMs;
     });
 
-  for (const { event, startsAt } of upcomingEvents) {
-    const key = `${event.id}|${startsAt.toISOString()}`;
+  for (const { calendarId, event, startsAt } of upcomingEvents) {
+    const key = `${calendarId}|${event.id}|${startsAt.toISOString()}`;
     if (!notifiedKeys.has(key)) {
-      await notifyCalendarEvent(event, startsAt);
+      await notifyCalendarEvent(calendarId, event, startsAt);
       notifiedKeys.add(key);
     }
   }
@@ -71,12 +113,12 @@ export async function createTestCalendarNotification() {
   }, "https://calendar.google.com/calendar/u/0/r");
 }
 
-async function notifyCalendarEvent(event, startsAt) {
+async function notifyCalendarEvent(calendarId, event, startsAt) {
   const title = event.summary || "Calendar event";
   const time = startsAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const location = event.location ? ` - ${event.location}` : "";
 
-  await createNotification(`calendar:${event.id}:${startsAt.toISOString()}`, {
+  await createNotification(`calendar:${calendarId}:${event.id}:${startsAt.toISOString()}`, {
     type: "basic",
     iconUrl: CALENDAR_ICON_URL,
     title: `Upcoming: ${title}`,
@@ -85,11 +127,27 @@ async function notifyCalendarEvent(event, startsAt) {
   }, event.htmlLink || null);
 }
 
-async function getPrimaryCalendarDefaults(token) {
-  const response = await googleFetch(token, "/calendar/v3/users/me/calendarList/primary", {
+async function getCalendarDefaults(token, calendarId) {
+  const response = await googleFetch(token, `/calendar/v3/users/me/calendarList/${encodeURIComponent(calendarId)}`, {
     fields: "defaultReminders(method,minutes)"
   });
   return response.defaultReminders ?? [];
+}
+
+function getSelectedCalendarIds(settings) {
+  return Array.isArray(settings.calendarIds) ? settings.calendarIds.filter(Boolean) : DEFAULT_SETTINGS.calendarIds;
+}
+
+function getEarliestDefaultReminderMinutes(defaultsList) {
+  const reminderMinutes = defaultsList
+    .map((reminders) => getEarliestPopupReminderMinutes(reminders))
+    .filter((minutes) => minutes !== null);
+
+  if (reminderMinutes.length === 0) {
+    return null;
+  }
+
+  return Math.min(...reminderMinutes);
 }
 
 function getEventStart(event) {

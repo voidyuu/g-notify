@@ -44,5 +44,6 @@ The redirect URI looks like `https://<extension-id>.chromiumapp.org/oauth2`. If 
 - Chrome 120+ is required because this scaffold allows `chrome.alarms` intervals as low as 30 seconds.
 - Gmail polling defaults to `in:inbox is:unread newer_than:7d`.
 - Gmail and Calendar checks can be turned on or off independently in the popup.
+- Calendar checks can include multiple selected calendars from the signed-in Google account.
 - Existing unread mail found on the first successful sync will notify immediately.
 - Calendar reminders currently use the primary calendar's popup reminders plus the poll interval, and timed events only. All-day events are ignored.

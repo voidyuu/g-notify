@@ -1,5 +1,5 @@
 import { getPublicAuth, getAuthToken, revokeStoredToken } from "./auth.js";
-import { createTestCalendarNotification, pollCalendar } from "./calendar.js";
+import { createTestCalendarNotification, listCalendars, pollCalendar } from "./calendar.js";
 import { createTestGmailNotification, pollGmail } from "./gmail.js";
 import {
   clearNotificationTargets,
@@ -61,6 +61,8 @@ async function handleMessage(message) {
   switch (message?.type) {
     case "getStatus":
       return getStatus();
+    case "getCalendarList":
+      return getCalendarList();
     case "signIn":
       if (message.settings) {
         await saveSettings(message.settings);
@@ -92,6 +94,13 @@ async function handleMessage(message) {
     default:
       throw new Error("Unknown message type.");
   }
+}
+
+async function getCalendarList() {
+  const token = await getAuthToken({ interactive: false });
+  return {
+    calendars: await listCalendars(token)
+  };
 }
 
 async function getStatus() {

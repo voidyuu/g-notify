@@ -307,6 +307,91 @@ input[type="text"] {
   width: 100%;
 }
 
+.calendarPicker {
+  display: grid;
+  gap: 6px;
+}
+
+.fieldLabel {
+  color: #475467;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.calendarList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.calendarChip {
+  --calendar-color: #98a2b3;
+  --calendar-foreground: #fff;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #d0d5dd;
+  border-radius: 999px;
+  color: #475467;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 7px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.calendarChip:hover {
+  border-color: var(--calendar-color);
+  background: color-mix(in srgb, var(--calendar-color) 12%, #fff);
+}
+
+.calendarChip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.calendarChip span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendarChip:has(input:checked) {
+  border-color: var(--calendar-color);
+  color: var(--calendar-foreground);
+  background: var(--calendar-color);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.16);
+}
+
+.calendarChip:has(input:focus-visible) {
+  outline: 2px solid #1a73e8;
+  outline-offset: 2px;
+}
+
+.calendarSwatch {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--calendar-color);
+  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.12);
+}
+
+.calendarChip:has(input:checked) .calendarSwatch {
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.42);
+}
+
+.calendarListNote {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .toggle {
   display: flex;
   align-items: center;

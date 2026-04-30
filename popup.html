@@ -1,99 +1,116 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>G Notify</title>
-    <link rel="stylesheet" href="styles.css">
-  </head>
-  <body>
-    <main class="shell">
-      <header class="header">
-        <div>
-          <h1>G Notify</h1>
-        </div>
-        <button id="statusDot" type="button" class="dot" aria-label="Toggle plugin status" title="Toggle plugin status"></button>
-      </header>
 
-      <section class="actions">
-        <button id="connectButton" type="button">Connect Google</button>
-        <button id="pollButton" type="button" class="secondary">Poll now</button>
-        <button id="signOutButton" type="button" class="ghost">Sign out</button>
-      </section>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>G Notify</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
 
-      <section class="summary">
-        <p id="summaryNote" class="summaryNote"></p>
-        <p id="summaryText">No sync yet.</p>
-      </section>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div>
+        <h1>G Notify</h1>
+      </div>
+      <button id="statusDot" type="button" class="dot" aria-label="Toggle plugin status"
+        title="Toggle plugin status"></button>
+    </header>
 
-      <form id="settingsForm" class="settings">
-        <section id="oauthFields" class="oauthFields">
-          <label>
-            OAuth client ID
-            <input id="oauthClientIdInput" type="text" spellcheck="false" autocomplete="off" placeholder="000000000000-xxxx.apps.googleusercontent.com">
-          </label>
+    <section class="actions">
+      <button id="connectButton" type="button">Connect Google</button>
+      <button id="pollButton" type="button" class="secondary">Poll now</button>
+      <button id="signOutButton" type="button" class="ghost">Sign out</button>
+    </section>
 
-          <label>
-            Client secret
-            <input id="oauthClientSecretInput" type="password" spellcheck="false" autocomplete="off" placeholder="GOCSPX-xxxxxxxx">
-          </label>
-          <a class="helpLink" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">
-            Open Google Cloud credentials
-          </a>
+    <section class="summary">
+      <p id="summaryNote" class="summaryNote"></p>
+      <p id="summaryText">No sync yet.</p>
+    </section>
 
-          <label>
-            Redirect URI
-            <input id="redirectUriInput" type="text" readonly>
-          </label>
-        </section>
-
+    <form id="settingsForm" class="settings">
+      <section id="oauthFields" class="oauthFields">
         <label>
-          Poll interval (minutes)
-          <input id="pollIntervalInput" type="number" min="0.5" step="0.5">
+          OAuth client ID
+          <input id="oauthClientIdInput" type="text" spellcheck="false" autocomplete="off"
+            placeholder="000000000000-xxxx.apps.googleusercontent.com">
         </label>
 
-        <section class="tabs">
-          <div class="tabList" role="tablist" aria-label="Service settings">
-            <button id="gmailTabButton" type="button" class="tabButton" role="tab" aria-selected="true" aria-controls="gmailTabPanel" data-tab="gmail">
-              <img src="icons/services/gmail.png" alt="" class="tabIcon">
-              <span>Gmail</span>
-              <span id="gmailTabStatus" class="tabStatus" aria-hidden="true"></span>
-            </button>
-            <button id="calendarTabButton" type="button" class="tabButton" role="tab" aria-selected="false" aria-controls="calendarTabPanel" data-tab="calendar">
-              <img src="icons/services/calendar.png" alt="" class="tabIcon">
-              <span>Calendar</span>
-              <span id="calendarTabStatus" class="tabStatus" aria-hidden="true"></span>
-            </button>
-          </div>
+        <label>
+          Client secret
+          <input id="oauthClientSecretInput" type="password" spellcheck="false" autocomplete="off"
+            placeholder="GOCSPX-xxxxxxxx">
+        </label>
+        <a class="helpLink" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">
+          Open Google Cloud credentials
+        </a>
 
-          <section id="gmailTabPanel" class="tabPanel" role="tabpanel" aria-labelledby="gmailTabButton" data-tab-panel="gmail">
-            <label class="toggle">
-              <input id="gmailEnabledInput" type="checkbox">
-              <span class="toggleSwitch" aria-hidden="true"></span>
-              <span>Enable Gmail checks</span>
-            </label>
+        <label>
+          Redirect URI
+          <input id="redirectUriInput" type="text" readonly>
+        </label>
+      </section>
 
-            <button id="testGmailButton" type="button" class="secondary serviceAction">Test Gmail</button>
+      <label>
+        Poll interval (minutes)
+        <input id="pollIntervalInput" type="number" min="0.5" step="0.5">
+      </label>
 
-            <label>
-              Gmail query
-              <input id="gmailQueryInput" type="text" spellcheck="false">
-            </label>
-          </section>
+      <section class="tabs">
+        <div class="tabList" role="tablist" aria-label="Service settings">
+          <button id="gmailTabButton" type="button" class="tabButton" role="tab" aria-selected="true"
+            aria-controls="gmailTabPanel" data-tab="gmail">
+            <img src="icons/services/gmail.png" alt="" class="tabIcon">
+            <span>Gmail</span>
+            <span id="gmailTabStatus" class="tabStatus" aria-hidden="true"></span>
+          </button>
+          <button id="calendarTabButton" type="button" class="tabButton" role="tab" aria-selected="false"
+            aria-controls="calendarTabPanel" data-tab="calendar">
+            <img src="icons/services/calendar.png" alt="" class="tabIcon">
+            <span>Calendar</span>
+            <span id="calendarTabStatus" class="tabStatus" aria-hidden="true"></span>
+          </button>
+        </div>
 
-          <section id="calendarTabPanel" class="tabPanel" role="tabpanel" aria-labelledby="calendarTabButton" data-tab-panel="calendar" hidden>
-            <label class="toggle">
-              <input id="calendarEnabledInput" type="checkbox">
-              <span class="toggleSwitch" aria-hidden="true"></span>
-              <span>Enable Calendar checks</span>
-            </label>
+        <section id="gmailTabPanel" class="tabPanel" role="tabpanel" aria-labelledby="gmailTabButton"
+          data-tab-panel="gmail">
+          <label class="toggle">
+            <input id="gmailEnabledInput" type="checkbox">
+            <span class="toggleSwitch" aria-hidden="true"></span>
+            <span>Enable Gmail checks</span>
+          </label>
 
-            <button id="testCalendarButton" type="button" class="secondary serviceAction">Test Calendar</button>
-          </section>
+
+          <label>
+            Gmail query
+            <input id="gmailQueryInput" type="text" spellcheck="false">
+          </label>
+
+          <button id="testGmailButton" type="button" class="secondary serviceAction">Test Gmail</button>
+
         </section>
-      </form>
-    </main>
 
-    <script src="src/popup.js"></script>
-  </body>
+        <section id="calendarTabPanel" class="tabPanel" role="tabpanel" aria-labelledby="calendarTabButton"
+          data-tab-panel="calendar" hidden>
+          <label class="toggle">
+            <input id="calendarEnabledInput" type="checkbox">
+            <span class="toggleSwitch" aria-hidden="true"></span>
+            <span>Enable Calendar checks</span>
+          </label>
+
+          <section class="calendarPicker" aria-label="Calendars">
+            <p class="fieldLabel">Calendars enabled</p>
+            <div id="calendarList" class="calendarList"></div>
+          </section>
+
+          <button id="testCalendarButton" type="button" class="secondary serviceAction">Test Calendar</button>
+        </section>
+      </section>
+    </form>
+  </main>
+
+  <script src="src/popup.js"></script>
+</body>
+
 </html>
