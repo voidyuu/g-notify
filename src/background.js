@@ -5,6 +5,7 @@ const POLL_ALARM = "g-notify:poll";
 const GMAIL_ICON_URL = chrome.runtime.getURL("icons/services/gmail.png");
 const CALENDAR_ICON_URL = chrome.runtime.getURL("icons/services/calendar.png");
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const TOKEN_REVOCATION_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
 
@@ -14,7 +15,8 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   pollIntervalMinutes: 5,
   gmailQuery: "in:inbox is:unread newer_than:7d",
-  maxGmailResults: 10
+  maxGmailResults: 10,
+  notifyExistingUnreadOnFirstSync: false
 };
 
 const DEFAULT_STATE = {
@@ -86,14 +88,14 @@ async function handleMessage(message) {
           ...(await getState()),
           lastError: null
         });
-        await pollAll({ interactive: false, reason: "signIn", token });
+        await pollAll({ interactive: false, reason: "signIn", token, throwOnError: true });
       }
       return getStatus();
     case "signOut":
       await signOut();
       return getStatus();
     case "pollNow":
-      await pollAll({ interactive: true, reason: "manual" });
+      await pollAll({ interactive: true, reason: "manual", throwOnError: true });
       return getStatus();
     case "testGmailNotification":
       await createTestGmailNotification();
@@ -116,11 +118,13 @@ async function getStatus() {
     getAuth()
   ]);
 
+  const hasToken = Boolean(auth.accessToken || auth.refreshToken);
+
   return {
-    settings,
+    settings: getPublicSettings(settings, hasToken),
     state,
-    hasToken: Boolean(auth.accessToken || auth.refreshToken),
-    auth,
+    hasToken,
+    auth: getPublicAuth(auth, hasToken),
     nextAlarm: await chrome.alarms.get(POLL_ALARM),
     redirectUri: chrome.identity.getRedirectURL("oauth2")
   };
@@ -133,6 +137,7 @@ async function saveSettings(partialSettings) {
     (current.oauthClientId && settings.oauthClientId !== current.oauthClientId) ||
     (current.oauthClientSecret && settings.oauthClientSecret !== current.oauthClientSecret)
   ) {
+    await revokeStoredToken(await getAuth());
     await clearAuth();
   }
   await chrome.storage.local.set({ settings });
@@ -154,32 +159,50 @@ async function ensureAlarm() {
   });
 }
 
-async function pollAll({ interactive, reason, token: providedToken = null }) {
+async function pollAll({ interactive, reason, token: providedToken = null, throwOnError = false }) {
   const settings = await getSettings();
   if (!settings.enabled && reason !== "manual" && reason !== "signIn") {
-    return;
+    return { ok: true, skipped: true };
   }
+
+  let partialErrors = [];
+  let pollResult = { ok: true, error: null };
 
   try {
     const token = providedToken || await getAuthToken({ interactive });
     const state = await getState();
     const gmailResult = await pollGmail(token, settings, state);
+    partialErrors = gmailResult.errors ?? [];
+    await setState({
+      ...gmailResult.state,
+      lastError: partialErrors.length > 0 ? partialErrors.join(" ") : null
+    });
+
     const calendarResult = await pollCalendar(token, settings, gmailResult.state);
+    const lastError = partialErrors.length > 0 ? partialErrors.join(" ") : null;
 
     await setState({
       ...calendarResult.state,
-      lastError: null,
+      lastError,
       lastPollAt: new Date().toISOString()
     });
+    pollResult = { ok: !lastError, error: lastError };
   } catch (error) {
+    const message = [...partialErrors, normalizeError(error)].join(" ");
     await setState({
       ...(await getState()),
-      lastError: normalizeError(error),
+      lastError: message,
       lastPollAt: new Date().toISOString()
     });
+    pollResult = { ok: false, error: message };
   } finally {
     await updateBadge();
   }
+
+  if (!pollResult.ok && throwOnError) {
+    throw new Error(pollResult.error);
+  }
+  return pollResult;
 }
 
 async function pollGmail(token, settings, state) {
@@ -192,14 +215,22 @@ async function pollGmail(token, settings, state) {
   const messages = response.messages ?? [];
   const knownIds = new Set(state.seenGmailIds);
   const newIds = messages.map((message) => message.id).filter((id) => !knownIds.has(id));
+  const isFirstSync = !state.gmailInitialized;
+  const idsToNotify = isFirstSync && !settings.notifyExistingUnreadOnFirstSync ? [] : newIds;
+  const notificationErrors = [];
 
-  if (newIds.length > 0) {
-    await Promise.all(newIds.map((id) => notifyGmailMessage(token, id)));
+  for (const id of idsToNotify) {
+    try {
+      await notifyGmailMessage(token, id);
+    } catch (error) {
+      notificationErrors.push(`Gmail message ${id} could not be notified: ${normalizeError(error)}`);
+    }
   }
 
   const nextSeen = unique([...messages.map((message) => message.id), ...state.seenGmailIds]).slice(0, 200);
 
   return {
+    errors: notificationErrors,
     state: {
       ...state,
       gmailInitialized: true,
@@ -400,6 +431,8 @@ async function startInteractiveAuth(clientId, clientSecret) {
   authUrl.searchParams.set("include_granted_scopes", "true");
   authUrl.searchParams.set("code_challenge", codeChallenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
+  const state = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+  authUrl.searchParams.set("state", state);
 
   const responseUrl = await chrome.identity.launchWebAuthFlow({
     url: authUrl.toString(),
@@ -407,12 +440,17 @@ async function startInteractiveAuth(clientId, clientSecret) {
   });
 
   const resultUrl = new URL(responseUrl);
-  const error = resultUrl.searchParams.get("error");
+  validateOAuthRedirect(resultUrl, redirectUri);
+  if (getOAuthResponseParam(resultUrl, "state") !== state) {
+    throw new Error("Google authorization returned an invalid state value.");
+  }
+
+  const error = getOAuthResponseParam(resultUrl, "error");
   if (error) {
     throw new Error(`Google authorization failed: ${error}`);
   }
 
-  const code = resultUrl.searchParams.get("code");
+  const code = getOAuthResponseParam(resultUrl, "code");
   if (!code) {
     throw new Error("Google authorization did not return an auth code.");
   }
@@ -489,6 +527,8 @@ async function canGetTokenSilently() {
 }
 
 async function signOut() {
+  const auth = await getAuth();
+  await revokeStoredToken(auth);
   await clearAuth();
 
   await setState({
@@ -516,6 +556,35 @@ async function clearAccessToken() {
       expiresAt: 0
     }
   });
+}
+
+async function revokeStoredToken(auth) {
+  const token = auth.refreshToken || auth.accessToken;
+  if (!token) {
+    return;
+  }
+
+  try {
+    await revokeToken(token);
+  } catch (error) {
+    console.warn("Failed to revoke Google token", error);
+  }
+}
+
+async function revokeToken(token) {
+  const response = await fetch(TOKEN_REVOCATION_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json"
+    },
+    body: new URLSearchParams({ token })
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Google token revocation failed: ${response.status} ${truncate(body, 300)}`);
+  }
 }
 
 async function createNotification(id, options) {
@@ -554,8 +623,40 @@ function sanitizeSettings(settings) {
     enabled: Boolean(settings.enabled),
     pollIntervalMinutes: Math.max(0.5, Number(settings.pollIntervalMinutes) || DEFAULT_SETTINGS.pollIntervalMinutes),
     gmailQuery: String(settings.gmailQuery || DEFAULT_SETTINGS.gmailQuery).trim(),
-    maxGmailResults: Math.max(1, Math.min(50, Number(settings.maxGmailResults) || DEFAULT_SETTINGS.maxGmailResults))
+    maxGmailResults: Math.max(1, Math.min(50, Number(settings.maxGmailResults) || DEFAULT_SETTINGS.maxGmailResults)),
+    notifyExistingUnreadOnFirstSync: Boolean(settings.notifyExistingUnreadOnFirstSync)
   };
+}
+
+function getPublicSettings(settings, hasToken) {
+  return {
+    ...settings,
+    oauthClientSecret: hasToken ? "" : settings.oauthClientSecret
+  };
+}
+
+function getPublicAuth(auth, hasToken) {
+  return {
+    hasToken,
+    expiresAt: auth.expiresAt || 0,
+    scopes: Array.isArray(auth.scopes) ? auth.scopes : []
+  };
+}
+
+function validateOAuthRedirect(resultUrl, redirectUri) {
+  const expectedUrl = new URL(redirectUri);
+  if (resultUrl.origin !== expectedUrl.origin || resultUrl.pathname !== expectedUrl.pathname) {
+    throw new Error("Google authorization returned an unexpected redirect URI.");
+  }
+}
+
+function getOAuthResponseParam(url, name) {
+  if (url.searchParams.has(name)) {
+    return url.searchParams.get(name);
+  }
+
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  return hashParams.get(name);
 }
 
 function getHeaders(headers) {

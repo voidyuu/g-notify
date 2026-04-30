@@ -14,6 +14,7 @@ const oauthClientSecretInput = document.querySelector("#oauthClientSecretInput")
 const redirectUriInput = document.querySelector("#redirectUriInput");
 const pollIntervalInput = document.querySelector("#pollIntervalInput");
 const gmailQueryInput = document.querySelector("#gmailQueryInput");
+const notifyExistingUnreadInput = document.querySelector("#notifyExistingUnreadInput");
 let lastHasToken = false;
 let lastEnabled = true;
 let saveTimer = null;
@@ -31,6 +32,7 @@ oauthClientIdInput.addEventListener("input", () => scheduleAutoSave());
 oauthClientSecretInput.addEventListener("input", () => scheduleAutoSave());
 pollIntervalInput.addEventListener("input", () => scheduleAutoSave());
 gmailQueryInput.addEventListener("input", () => scheduleAutoSave());
+notifyExistingUnreadInput.addEventListener("change", () => scheduleAutoSave());
 
 renderInitialStatus();
 refreshStatus();
@@ -49,6 +51,7 @@ async function runAction(type, successMessage, extra = {}) {
     renderStatus(response);
     setSummaryNote(buildFeedback(type, response, successMessage));
   } catch (error) {
+    await refreshStatus().catch(() => {});
     setSummaryNote(error.message, true);
     renderStatusDot({ enabled: lastEnabled, hasError: true });
   } finally {
@@ -72,7 +75,7 @@ function renderInitialStatus() {
   renderStatusDot({ enabled: true, hasError: false });
 }
 
-function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri, auth }) {
+function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri }) {
   isRendering = true;
   try {
     oauthClientIdInput.value = settings.oauthClientId;
@@ -80,6 +83,7 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri, auth 
     redirectUriInput.value = redirectUri || "";
     pollIntervalInput.value = settings.pollIntervalMinutes;
     gmailQueryInput.value = settings.gmailQuery;
+    notifyExistingUnreadInput.checked = Boolean(settings.notifyExistingUnreadOnFirstSync);
     lastEnabled = settings.enabled;
 
     connectButton.classList.toggle("hiddenAction", hasToken);
@@ -94,7 +98,7 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri, auth 
     if (!settings.enabled) {
       statusText.textContent = hasToken ? "Plugin paused." : "Plugin paused before sign-in.";
       renderStatusDot({ enabled: false, hasError: false });
-      summaryText.textContent = buildSummary(settings, state, auth);
+      summaryText.textContent = buildSummary(settings, state, hasToken);
       syncSummaryNoteFromState(state);
       return;
     }
@@ -104,7 +108,7 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri, auth 
         ? `Connected, but sync needs attention: ${state.lastError}`
         : `Needs attention: ${state.lastError}`;
       renderStatusDot({ enabled: true, hasError: true });
-      summaryText.textContent = buildSummary(settings, state, auth);
+      summaryText.textContent = buildSummary(settings, state, hasToken);
       syncSummaryNoteFromState(state);
       return;
     }
@@ -117,7 +121,7 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri, auth 
       renderStatusDot({ enabled: true, hasError: false });
     }
 
-    summaryText.textContent = buildSummary(settings, state, auth);
+    summaryText.textContent = buildSummary(settings, state, hasToken);
     syncSummaryNoteFromState(state);
   } finally {
     isRendering = false;
@@ -125,13 +129,19 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri, auth 
 }
 
 function readSettings() {
-  return {
-    oauthClientId: oauthClientIdInput.value,
-    oauthClientSecret: oauthClientSecretInput.value,
+  const settings = {
     enabled: lastEnabled,
     pollIntervalMinutes: Number(pollIntervalInput.value),
-    gmailQuery: gmailQueryInput.value
+    gmailQuery: gmailQueryInput.value,
+    notifyExistingUnreadOnFirstSync: notifyExistingUnreadInput.checked
   };
+
+  if (!lastHasToken) {
+    settings.oauthClientId = oauthClientIdInput.value;
+    settings.oauthClientSecret = oauthClientSecretInput.value;
+  }
+
+  return settings;
 }
 
 function setBusy(isBusy) {
@@ -157,13 +167,13 @@ function formatTime(timestamp) {
   });
 }
 
-function buildSummary(settings, state, auth) {
+function buildSummary(settings, state, hasToken) {
   if (!settings.enabled) {
-    return hasStoredAuth(auth) ? "Plugin is paused. Background checks and notifications are off." : "Plugin is paused.";
+    return hasToken ? "Plugin is paused. Background checks and notifications are off." : "Plugin is paused.";
   }
 
   if (!state.lastPollAt) {
-    return hasStoredAuth(auth) ? "Signed in. No sync yet." : "No sync yet.";
+    return hasToken ? "Signed in. No sync yet." : "No sync yet.";
   }
 
   const parts = [
@@ -180,10 +190,6 @@ function buildFeedback(type, response, fallback) {
   }
 
   return fallback;
-}
-
-function hasStoredAuth(auth) {
-  return Boolean(auth?.accessToken || auth?.refreshToken);
 }
 
 async function updateEnabled(enabled) {

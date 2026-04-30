@@ -11,6 +11,7 @@
     "storage"
   ],
   "host_permissions": [
+    "https://oauth2.googleapis.com/*",
     "https://www.googleapis.com/*"
   ],
   "background": {
