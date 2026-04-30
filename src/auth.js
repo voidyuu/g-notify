@@ -13,6 +13,21 @@ const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const TOKEN_REVOCATION_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
+const GOOGLE_FETCH_MAX_ATTEMPTS = 3;
+const TOKEN_REQUEST_MAX_ATTEMPTS = 2;
+const RETRY_BASE_DELAY_MS = 500;
+
+export class GNotifyError extends Error {
+  constructor(message, { code = "unknown", status = 0, retryable = false, retryAfterMs = null, cause = null } = {}) {
+    super(message);
+    this.name = "GNotifyError";
+    this.code = code;
+    this.status = status;
+    this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
+    this.cause = cause;
+  }
+}
 
 export async function googleFetch(token, path, params = {}) {
   const url = new URL(`${API_ROOT}${path}`);
@@ -24,23 +39,30 @@ export async function googleFetch(token, path, params = {}) {
     }
   }
 
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json"
+  return fetchWithRetry(async () => {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json"
+      }
+    }).catch((error) => {
+      throw new GNotifyError("Could not contact Google. Check your connection and try again.", {
+        code: "network",
+        retryable: true,
+        cause: error
+      });
+    });
+
+    if (response.status === 401) {
+      await clearAccessToken();
     }
-  });
 
-  if (response.status === 401) {
-    await clearAccessToken();
-  }
+    if (!response.ok) {
+      throw await classifyGoogleResponseError(response, "Google API request failed");
+    }
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Google API ${response.status}: ${truncate(body, 300)}`);
-  }
-
-  return response.json();
+    return response.json();
+  }, GOOGLE_FETCH_MAX_ATTEMPTS);
 }
 
 export async function getAuthToken({ interactive }) {
@@ -152,25 +174,47 @@ async function refreshAccessToken(clientId, clientSecret, refreshToken) {
     client_secret: clientSecret,
     refresh_token: refreshToken,
     grant_type: "refresh_token"
+  }).catch(async (error) => {
+    if (error?.code === "auth") {
+      await clearAuth();
+    }
+    throw error;
   });
   await storeTokenResponse(clientId, { ...tokenResponse, refresh_token: refreshToken });
   return tokenResponse.access_token;
 }
 
 async function tokenRequest(params) {
-  const response = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json"
-    },
-    body: new URLSearchParams(params)
-  });
+  const response = await fetchWithRetry(async () => {
+    const tokenResponse = await fetch(TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json"
+      },
+      body: new URLSearchParams(params)
+    }).catch((error) => {
+      throw new GNotifyError("Could not contact Google while signing in. Check your connection and try again.", {
+        code: "network",
+        retryable: true,
+        cause: error
+      });
+    });
+
+    if (!tokenResponse.ok && isRetryableStatus(tokenResponse.status)) {
+      throw await classifyGoogleResponseError(tokenResponse, "Google token request failed");
+    }
+
+    return tokenResponse;
+  }, TOKEN_REQUEST_MAX_ATTEMPTS);
 
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const description = body.error_description || body.error || response.statusText;
-    throw new Error(`Google token request failed: ${description}`);
+    throw new GNotifyError(`Google authentication failed: ${description}`, {
+      code: "auth",
+      status: response.status
+    });
   }
 
   return body;
@@ -204,6 +248,152 @@ async function revokeToken(token) {
     const body = await response.text().catch(() => "");
     throw new Error(`Google token revocation failed: ${response.status} ${truncate(body, 300)}`);
   }
+}
+
+async function fetchWithRetry(operation, maxAttempts) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+      await delay(getRetryDelayMs(attempt, error.retryAfterMs));
+    }
+  }
+
+  throw lastError ?? new GNotifyError("Google request failed.", { code: "unknown" });
+}
+
+async function classifyGoogleResponseError(response, fallback) {
+  const bodyText = await response.text().catch(() => "");
+  const body = parseJson(bodyText);
+  const reason = getGoogleErrorReason(body);
+  const message = getGoogleErrorMessage(body) || truncate(bodyText, 300) || response.statusText || fallback;
+  const retryAfterMs = parseRetryAfterMs(response.headers?.get?.("Retry-After"));
+
+  if (response.status === 401 || isAuthReason(reason)) {
+    return new GNotifyError("Google authentication expired or was revoked. Sign in again.", {
+      code: "auth",
+      status: response.status
+    });
+  }
+
+  if (response.status === 403 && isPermissionReason(reason)) {
+    return new GNotifyError("Google permission denied. Reconnect and grant Gmail/Calendar access.", {
+      code: "auth",
+      status: response.status
+    });
+  }
+
+  if (response.status === 429 || isQuotaReason(reason)) {
+    return new GNotifyError("Quota or rate limit reached. Try again later or increase the poll interval.", {
+      code: "quota",
+      status: response.status,
+      retryable: true,
+      retryAfterMs
+    });
+  }
+
+  if (response.status >= 500) {
+    return new GNotifyError("Google service is temporarily unavailable. G Notify will retry on the next poll.", {
+      code: "api",
+      status: response.status,
+      retryable: true,
+      retryAfterMs
+    });
+  }
+
+  return new GNotifyError(`Google API ${response.status}: ${message}`, {
+    code: "api",
+    status: response.status
+  });
+}
+
+function isRetryableError(error) {
+  return Boolean(error?.retryable);
+}
+
+function isRetryableStatus(status) {
+  return status === 429 || status >= 500;
+}
+
+function getRetryDelayMs(attempt, retryAfterMs = null) {
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return Math.min(retryAfterMs, 10_000);
+  }
+
+  return RETRY_BASE_DELAY_MS * (2 ** (attempt - 1)) + Math.floor(Math.random() * 150);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function getGoogleErrorReason(body) {
+  const error = body?.error;
+  if (Array.isArray(error?.errors) && error.errors[0]?.reason) {
+    return String(error.errors[0].reason);
+  }
+  return String(error?.status || error?.reason || error?.error || "").toLowerCase();
+}
+
+function getGoogleErrorMessage(body) {
+  const error = body?.error;
+  if (typeof error === "string") {
+    return error;
+  }
+  return error?.message || "";
+}
+
+function isAuthReason(reason) {
+  return [
+    "autherror",
+    "invalidcredentials",
+    "unauthorized",
+    "unauthenticated"
+  ].includes(String(reason).toLowerCase());
+}
+
+function isPermissionReason(reason) {
+  return [
+    "accessnotconfigured",
+    "forbidden",
+    "insufficientpermissions",
+    "insufficientpermission"
+  ].includes(String(reason).toLowerCase());
+}
+
+function isQuotaReason(reason) {
+  const normalized = String(reason).toLowerCase();
+  return normalized.includes("quota") ||
+    normalized.includes("ratelimit") ||
+    normalized.includes("rate_limit") ||
+    normalized.includes("limitexceeded");
+}
+
+function parseRetryAfterMs(value) {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return seconds * 1000;
+  }
+
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? Math.max(0, date.getTime() - Date.now()) : null;
 }
 
 function validateOAuthRedirect(resultUrl, redirectUri) {

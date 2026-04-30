@@ -243,5 +243,17 @@ function normalizeError(error) {
     return error;
   }
 
-  return error.message || "Unknown error.";
+  const message = error.message || "Unknown error.";
+  switch (error.code) {
+    case "auth":
+      return `Authentication error: ${message}`;
+    case "quota":
+      return `Google API quota: ${message}`;
+    case "network":
+      return `Network error: ${message}`;
+    case "api":
+      return `Google API error: ${message}`;
+    default:
+      return message;
+  }
 }
