@@ -13,13 +13,16 @@ const oauthClientSecretInput = document.querySelector("#oauthClientSecretInput")
 const redirectUriInput = document.querySelector("#redirectUriInput");
 const gmailEnabledInput = document.querySelector("#gmailEnabledInput");
 const calendarEnabledInput = document.querySelector("#calendarEnabledInput");
+const pollIntervalField = document.querySelector("#pollIntervalField");
 const pollIntervalInput = document.querySelector("#pollIntervalInput");
 const gmailQueryInput = document.querySelector("#gmailQueryInput");
+const servicesTabs = document.querySelector(".tabs");
 const calendarList = document.querySelector("#calendarList");
 const tabButtons = document.querySelectorAll("[data-tab]");
 const tabPanels = document.querySelectorAll("[data-tab-panel]");
 const gmailTabStatus = document.querySelector("#gmailTabStatus");
 const calendarTabStatus = document.querySelector("#calendarTabStatus");
+const DEFAULT_POLL_INTERVAL_MINUTES = 5;
 let lastHasToken = false;
 let lastEnabled = true;
 let lastGmailEnabled = true;
@@ -43,7 +46,8 @@ gmailEnabledInput.addEventListener("change", () => scheduleAutoSave());
 calendarEnabledInput.addEventListener("change", () => scheduleAutoSave());
 gmailEnabledInput.addEventListener("change", () => updateTabStatusIndicators());
 calendarEnabledInput.addEventListener("change", () => updateTabStatusIndicators());
-pollIntervalInput.addEventListener("input", () => scheduleAutoSave());
+pollIntervalInput.addEventListener("input", () => handlePollIntervalInput());
+pollIntervalInput.addEventListener("blur", () => handlePollIntervalBlur());
 gmailQueryInput.addEventListener("input", () => scheduleAutoSave());
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => selectTab(button.dataset.tab));
@@ -116,6 +120,8 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri }) {
     testCalendarButton.disabled = !settings.calendarEnabled;
     lastHasToken = hasToken;
     oauthFields.classList.toggle("hidden", hasToken);
+    pollIntervalField.hidden = !hasToken;
+    servicesTabs.hidden = !hasToken;
     gmailQueryInput.disabled = !settings.gmailEnabled;
 
     const connectionNote = buildConnectionNote(hasToken, nextAlarm);
@@ -195,8 +201,12 @@ function formatTime(timestamp) {
 }
 
 function buildSummary(settings, state, hasToken) {
+  if (!hasToken) {
+    return "Connect Google to start notifications.";
+  }
+
   if (!settings.enabled) {
-    return hasToken ? "Plugin is paused. Background checks and notifications are off." : "Plugin is paused.";
+    return "Plugin is paused. Background checks and notifications are off.";
   }
 
   if (!settings.gmailEnabled && !settings.calendarEnabled) {
@@ -205,7 +215,7 @@ function buildSummary(settings, state, hasToken) {
 
   if (!state.lastPollAt) {
     const serviceText = buildEnabledServicesText(settings);
-    return hasToken ? `Signed in. ${serviceText} ready. No sync yet.` : `${serviceText} ready. No sync yet.`;
+    return `Signed in. ${serviceText} ready. No sync yet.`;
   }
 
   const parts = [
@@ -234,6 +244,25 @@ function buildConnectionNote(hasToken, nextAlarm) {
 
   const alarmText = nextAlarm?.scheduledTime ? ` Next poll ${formatTime(nextAlarm.scheduledTime)}.` : "";
   return `Connected.${alarmText}`;
+}
+
+function handlePollIntervalInput() {
+  if (pollIntervalInput.value.trim() === "") {
+    window.clearTimeout(saveTimer);
+    setSummaryNote("");
+    return;
+  }
+
+  scheduleAutoSave();
+}
+
+function handlePollIntervalBlur() {
+  if (pollIntervalInput.value.trim() !== "") {
+    return;
+  }
+
+  pollIntervalInput.value = String(DEFAULT_POLL_INTERVAL_MINUTES);
+  scheduleAutoSave();
 }
 
 async function refreshCalendarOptions({ settings, hasToken }) {

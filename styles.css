@@ -234,6 +234,14 @@ input[type="text"] {
   gap: 10px;
 }
 
+.tabs[hidden] {
+  display: none;
+}
+
+#pollIntervalField[hidden] {
+  display: none;
+}
+
 .tabList {
   display: grid;
   grid-template-columns: 1fr 1fr;
