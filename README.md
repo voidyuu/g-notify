@@ -46,4 +46,4 @@ The redirect URI looks like `https://<extension-id>.chromiumapp.org/oauth2`. If 
 - Gmail and Calendar checks can be turned on or off independently in the popup.
 - Calendar checks can include multiple selected calendars from the signed-in Google account.
 - Existing unread mail found on the first successful sync will notify immediately.
-- Calendar reminders currently use the primary calendar's popup reminders plus the poll interval, and timed events only. All-day events are ignored.
+- Calendar reminders use popup reminders from selected calendars, support timed and all-day events, and will send one compensation reminder if the original reminder window was missed while the event is still ongoing.
