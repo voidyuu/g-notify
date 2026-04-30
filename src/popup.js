@@ -14,7 +14,6 @@ const oauthClientSecretInput = document.querySelector("#oauthClientSecretInput")
 const redirectUriInput = document.querySelector("#redirectUriInput");
 const pollIntervalInput = document.querySelector("#pollIntervalInput");
 const gmailQueryInput = document.querySelector("#gmailQueryInput");
-const notifyExistingUnreadInput = document.querySelector("#notifyExistingUnreadInput");
 let lastHasToken = false;
 let lastEnabled = true;
 let saveTimer = null;
@@ -32,7 +31,6 @@ oauthClientIdInput.addEventListener("input", () => scheduleAutoSave());
 oauthClientSecretInput.addEventListener("input", () => scheduleAutoSave());
 pollIntervalInput.addEventListener("input", () => scheduleAutoSave());
 gmailQueryInput.addEventListener("input", () => scheduleAutoSave());
-notifyExistingUnreadInput.addEventListener("change", () => scheduleAutoSave());
 
 renderInitialStatus();
 refreshStatus();
@@ -83,7 +81,6 @@ function renderStatus({ settings, state, hasToken, nextAlarm, redirectUri }) {
     redirectUriInput.value = redirectUri || "";
     pollIntervalInput.value = settings.pollIntervalMinutes;
     gmailQueryInput.value = settings.gmailQuery;
-    notifyExistingUnreadInput.checked = Boolean(settings.notifyExistingUnreadOnFirstSync);
     lastEnabled = settings.enabled;
 
     connectButton.classList.toggle("hiddenAction", hasToken);
@@ -132,8 +129,7 @@ function readSettings() {
   const settings = {
     enabled: lastEnabled,
     pollIntervalMinutes: Number(pollIntervalInput.value),
-    gmailQuery: gmailQueryInput.value,
-    notifyExistingUnreadOnFirstSync: notifyExistingUnreadInput.checked
+    gmailQuery: gmailQueryInput.value
   };
 
   if (!lastHasToken) {

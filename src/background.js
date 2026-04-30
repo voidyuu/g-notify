@@ -2,6 +2,7 @@ const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const API_ROOT = "https://www.googleapis.com";
 const POLL_ALARM = "g-notify:poll";
+const NOTIFICATION_TARGETS_STORAGE_KEY = "notificationTargets";
 const GMAIL_ICON_URL = chrome.runtime.getURL("icons/services/gmail.png");
 const CALENDAR_ICON_URL = chrome.runtime.getURL("icons/services/calendar.png");
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -15,8 +16,7 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   pollIntervalMinutes: 5,
   gmailQuery: "in:inbox is:unread newer_than:7d",
-  maxGmailResults: 10,
-  notifyExistingUnreadOnFirstSync: false
+  maxGmailResults: 10
 };
 
 const DEFAULT_STATE = {
@@ -50,6 +50,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === POLL_ALARM) {
     pollAll({ interactive: false, reason: "alarm" });
   }
+});
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  handleNotificationClick(notificationId);
+});
+
+chrome.notifications.onClosed.addListener((notificationId) => {
+  forgetNotificationTarget(notificationId);
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -215,11 +223,9 @@ async function pollGmail(token, settings, state) {
   const messages = response.messages ?? [];
   const knownIds = new Set(state.seenGmailIds);
   const newIds = messages.map((message) => message.id).filter((id) => !knownIds.has(id));
-  const isFirstSync = !state.gmailInitialized;
-  const idsToNotify = isFirstSync && !settings.notifyExistingUnreadOnFirstSync ? [] : newIds;
   const notificationErrors = [];
 
-  for (const id of idsToNotify) {
+  for (const id of newIds) {
     try {
       await notifyGmailMessage(token, id);
     } catch (error) {
@@ -259,7 +265,7 @@ async function notifyGmailMessage(token, messageId) {
     title: `New mail: ${subject}`,
     message: truncate(`${from}${snippet ? ` - ${snippet}` : ""}`, 180),
     priority: 1
-  });
+  }, buildGmailThreadUrl(message.threadId || message.id));
 }
 
 async function pollCalendar(token, settings, state) {
@@ -330,7 +336,7 @@ async function notifyCalendarEvent(event, startsAt) {
     title: `Upcoming: ${title}`,
     message: `${time}${location}`,
     priority: 1
-  });
+  }, event.htmlLink || null);
 }
 
 async function createTestGmailNotification() {
@@ -340,7 +346,7 @@ async function createTestGmailNotification() {
     title: "New mail: Test notification",
     message: "This is a sample Gmail notification from G Notify.",
     priority: 1
-  });
+  }, "https://mail.google.com/mail/u/0/#inbox");
 }
 
 async function createTestCalendarNotification() {
@@ -350,7 +356,7 @@ async function createTestCalendarNotification() {
     title: "Upcoming: Test event",
     message: "This is a sample Calendar notification from G Notify.",
     priority: 1
-  });
+  }, "https://calendar.google.com/calendar/u/0/r");
 }
 
 async function getPrimaryCalendarDefaults(token) {
@@ -530,6 +536,7 @@ async function signOut() {
   const auth = await getAuth();
   await revokeStoredToken(auth);
   await clearAuth();
+  await chrome.storage.local.set({ [NOTIFICATION_TARGETS_STORAGE_KEY]: {} });
 
   await setState({
     ...DEFAULT_STATE,
@@ -587,12 +594,76 @@ async function revokeToken(token) {
   }
 }
 
-async function createNotification(id, options) {
+async function handleNotificationClick(notificationId) {
   try {
+    const targetUrl = await getNotificationTarget(notificationId);
+    if (!targetUrl) {
+      return;
+    }
+
+    await chrome.notifications.clear(notificationId);
+    await forgetNotificationTarget(notificationId);
+    await chrome.tabs.create({ url: targetUrl });
+  } catch (error) {
+    console.warn("Failed to open notification target", error);
+  }
+}
+
+async function createNotification(id, options, targetUrl = null) {
+  try {
+    if (targetUrl) {
+      await rememberNotificationTarget(id, targetUrl);
+    }
     await chrome.notifications.create(id, options);
   } catch (error) {
     console.warn("Failed to create notification", error);
   }
+}
+
+async function rememberNotificationTarget(notificationId, targetUrl) {
+  if (!isAllowedNotificationTarget(targetUrl)) {
+    return;
+  }
+
+  const targets = await getNotificationTargets();
+  targets[notificationId] = {
+    url: targetUrl,
+    createdAt: Date.now()
+  };
+
+  await chrome.storage.local.set({
+    [NOTIFICATION_TARGETS_STORAGE_KEY]: pruneNotificationTargets(targets)
+  });
+}
+
+async function getNotificationTarget(notificationId) {
+  const targets = await getNotificationTargets();
+  const target = targets[notificationId];
+  return target && isAllowedNotificationTarget(target.url) ? target.url : null;
+}
+
+async function forgetNotificationTarget(notificationId) {
+  const targets = await getNotificationTargets();
+  if (!targets[notificationId]) {
+    return;
+  }
+
+  delete targets[notificationId];
+  await chrome.storage.local.set({ [NOTIFICATION_TARGETS_STORAGE_KEY]: targets });
+}
+
+async function getNotificationTargets() {
+  const result = await chrome.storage.local.get(NOTIFICATION_TARGETS_STORAGE_KEY);
+  return result[NOTIFICATION_TARGETS_STORAGE_KEY] ?? {};
+}
+
+function pruneNotificationTargets(targets) {
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  return Object.fromEntries(
+    Object.entries(targets)
+      .filter(([, target]) => target?.url && Number(target.createdAt) >= cutoff)
+      .slice(-200)
+  );
 }
 
 async function updateBadge() {
@@ -623,8 +694,7 @@ function sanitizeSettings(settings) {
     enabled: Boolean(settings.enabled),
     pollIntervalMinutes: Math.max(0.5, Number(settings.pollIntervalMinutes) || DEFAULT_SETTINGS.pollIntervalMinutes),
     gmailQuery: String(settings.gmailQuery || DEFAULT_SETTINGS.gmailQuery).trim(),
-    maxGmailResults: Math.max(1, Math.min(50, Number(settings.maxGmailResults) || DEFAULT_SETTINGS.maxGmailResults)),
-    notifyExistingUnreadOnFirstSync: Boolean(settings.notifyExistingUnreadOnFirstSync)
+    maxGmailResults: Math.max(1, Math.min(50, Number(settings.maxGmailResults) || DEFAULT_SETTINGS.maxGmailResults))
   };
 }
 
@@ -657,6 +727,31 @@ function getOAuthResponseParam(url, name) {
 
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
   return hashParams.get(name);
+}
+
+function buildGmailThreadUrl(threadId) {
+  return `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(threadId)}`;
+}
+
+function isAllowedNotificationTarget(targetUrl) {
+  try {
+    const url = new URL(targetUrl);
+    if (url.protocol !== "https:") {
+      return false;
+    }
+
+    if (url.hostname === "mail.google.com" && url.pathname.startsWith("/mail/")) {
+      return true;
+    }
+
+    if (url.hostname === "calendar.google.com" && url.pathname.startsWith("/calendar/")) {
+      return true;
+    }
+
+    return url.hostname === "www.google.com" && url.pathname.startsWith("/calendar/");
+  } catch {
+    return false;
+  }
 }
 
 function getHeaders(headers) {
