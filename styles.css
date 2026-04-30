@@ -404,6 +404,7 @@ input[type="text"] {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 6px 0;
   color: #18212f;
   cursor: pointer;
   font-size: 13px;
