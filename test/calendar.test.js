@@ -261,7 +261,7 @@ test("compensates a missed reminder once before an event ends", async () => {
   assert.equal(notifications.length, 1);
 });
 
-test("does not compensate reminders after event end", async () => {
+test("compensates missed reminders even after event end within 24h of event start", async () => {
   const notifications = [];
   const state = { notifiedCalendarKeys: [] };
   const now = new Date("2026-04-30T11:30:00.000Z");
@@ -297,5 +297,97 @@ test("does not compensate reminders after event end", async () => {
     }
   });
 
+  assert.equal(notifications.length, 1);
+});
+
+test("does not compensate reminders after 24h from event start", async () => {
+  const notifications = [];
+  const state = { notifiedCalendarKeys: [] };
+  const now = new Date("2026-05-01T10:01:00.000Z");
+
+  const googleFetch = async (_token, path) => {
+    if (path.includes("/calendarList/")) {
+      return {
+        defaultReminders: [{ method: "popup", minutes: 60 }]
+      };
+    }
+
+    if (path.endsWith("/events")) {
+      return {
+        items: [{
+          id: "evt-7b",
+          summary: "Old Meeting",
+          start: { dateTime: "2026-04-30T10:00:00.000Z" },
+          end: { dateTime: "2026-04-30T11:00:00.000Z" },
+          status: "confirmed",
+          reminders: { useDefault: true }
+        }]
+      };
+    }
+
+    throw new Error(`Unexpected path: ${path}`);
+  };
+
+  await pollCalendar("token", SETTINGS, state, {
+    now: () => now,
+    googleFetch,
+    createNotification: async () => {
+      notifications.push("sent");
+    }
+  });
+
   assert.equal(notifications.length, 0);
+});
+
+test("sends notifications for each popup reminder on the same event", async () => {
+  const notifications = [];
+  const initialState = { notifiedCalendarKeys: [] };
+
+  const googleFetch = async (_token, path) => {
+    if (path.includes("/calendarList/")) {
+      return {
+        defaultReminders: []
+      };
+    }
+
+    if (path.endsWith("/events")) {
+      return {
+        items: [{
+          id: "evt-8",
+          summary: "Multi Reminder Event",
+          start: { dateTime: "2026-04-30T10:30:00.000Z" },
+          end: { dateTime: "2026-04-30T11:00:00.000Z" },
+          status: "confirmed",
+          reminders: {
+            useDefault: false,
+            overrides: [
+              { method: "popup", minutes: 30 },
+              { method: "popup", minutes: 10 }
+            ]
+          }
+        }]
+      };
+    }
+
+    throw new Error(`Unexpected path: ${path}`);
+  };
+
+  const first = await pollCalendar("token", SETTINGS, initialState, {
+    now: () => new Date("2026-04-30T10:00:00.000Z"),
+    googleFetch,
+    createNotification: async (id) => {
+      notifications.push(id);
+    }
+  });
+
+  await pollCalendar("token", SETTINGS, first.state, {
+    now: () => new Date("2026-04-30T10:20:00.000Z"),
+    googleFetch,
+    createNotification: async (id) => {
+      notifications.push(id);
+    }
+  });
+
+  assert.equal(notifications.length, 2);
+  assert.notEqual(notifications[0], notifications[1]);
 });

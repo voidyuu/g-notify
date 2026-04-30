@@ -74,16 +74,15 @@ export async function pollCalendar(token, settings, state, deps = {}) {
       calendarId,
       event,
       timing: getEventTiming(event),
-      reminderMinutes: getEventReminderMinutes(event, calendarDefaultsById.get(calendarId) ?? [])
+      reminderMinutesList: getEventReminderMinutesList(event, calendarDefaultsById.get(calendarId) ?? [])
     }))
-    .map(({ calendarId, event, timing, reminderMinutes }) => ({
+    .flatMap(({ calendarId, event, timing, reminderMinutesList }) => reminderMinutesList.map((reminderMinutes) => ({
       calendarId,
       event,
       timing,
-      reminderAt: getReminderTime(timing, reminderMinutes),
-      endsAt: getEventEndTime(event, timing)
-    }))
-    .filter(({ reminderAt, timing, endsAt }) => {
+      reminderAt: getReminderTime(timing, reminderMinutes)
+    })))
+    .filter(({ reminderAt, timing }) => {
       if (!timing || !reminderAt || now < reminderAt) {
         return false;
       }
@@ -93,14 +92,15 @@ export async function pollCalendar(token, settings, state, deps = {}) {
         return true;
       }
 
-      const compensationEnd = endsAt ?? timing.startsAt;
+      const compensationEnd = new Date(timing.startsAt.getTime() + DAY_MINUTES * 60 * 1000);
       return now < compensationEnd;
-    });
+    })
+    .sort((a, b) => a.reminderAt.getTime() - b.reminderAt.getTime());
 
-  for (const { calendarId, event, timing } of upcomingEvents) {
-    const key = `${calendarId}|${event.id}|${timing.startsAt.toISOString()}`;
+  for (const { calendarId, event, timing, reminderAt } of upcomingEvents) {
+    const key = `${calendarId}|${event.id}|${timing.startsAt.toISOString()}|${reminderAt.toISOString()}`;
     if (!notifiedKeys.has(key)) {
-      await notifyCalendarEvent(calendarId, event, timing, createNotificationFn);
+      await notifyCalendarEvent(calendarId, event, timing, reminderAt, createNotificationFn);
       notifiedKeys.add(key);
     }
   }
@@ -130,12 +130,12 @@ export async function createTestCalendarNotification() {
   }, "https://calendar.google.com/calendar/u/0/r");
 }
 
-async function notifyCalendarEvent(calendarId, event, timing, createNotificationFn = createNotification) {
+async function notifyCalendarEvent(calendarId, event, timing, reminderAt, createNotificationFn = createNotification) {
   const title = event.summary || "Calendar event";
   const time = timing.isAllDay ? "All day" : timing.startsAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const location = event.location ? ` - ${event.location}` : "";
 
-  await createNotificationFn(`calendar:${calendarId}:${event.id}:${timing.startsAt.toISOString()}`, {
+  await createNotificationFn(`calendar:${calendarId}:${event.id}:${timing.startsAt.toISOString()}:${reminderAt.toISOString()}`, {
     type: "basic",
     iconUrl: CALENDAR_ICON_URL,
     title: `Upcoming: ${title}`,
@@ -181,24 +181,6 @@ function getEventTiming(event) {
   return null;
 }
 
-function getEventEndTime(event, timing) {
-  if (!timing) {
-    return null;
-  }
-
-  if (event.end?.dateTime) {
-    const endsAt = new Date(event.end.dateTime);
-    return Number.isFinite(endsAt.getTime()) ? endsAt : null;
-  }
-
-  if (event.end?.date) {
-    const endsAt = parseLocalDate(event.end.date);
-    return endsAt ?? null;
-  }
-
-  return null;
-}
-
 function getReminderTime(timing, reminderMinutes) {
   if (!timing || reminderMinutes === null || reminderMinutes < 0) {
     return null;
@@ -208,27 +190,23 @@ function getReminderTime(timing, reminderMinutes) {
   return Number.isFinite(reminderAt.getTime()) ? reminderAt : null;
 }
 
-function getEventReminderMinutes(event, defaultReminders) {
+function getEventReminderMinutesList(event, defaultReminders) {
   const reminders = event.reminders;
   if (reminders?.useDefault) {
-    return getEarliestPopupReminderMinutes(defaultReminders);
+    return getSortedUniquePopupReminderMinutes(defaultReminders);
   }
 
   if (Array.isArray(reminders?.overrides)) {
-    return getEarliestPopupReminderMinutes(reminders.overrides);
+    return getSortedUniquePopupReminderMinutes(reminders.overrides);
   }
 
-  return getEarliestPopupReminderMinutes(defaultReminders);
+  return getSortedUniquePopupReminderMinutes(defaultReminders);
 }
 
-function getEarliestPopupReminderMinutes(reminders) {
-  const popupMinutes = getPopupReminderMinutes(reminders);
-
-  if (popupMinutes.length === 0) {
-    return null;
-  }
-
-  return Math.min(...popupMinutes);
+function getSortedUniquePopupReminderMinutes(reminders) {
+  return [...new Set(getPopupReminderMinutes(reminders))]
+    .filter((minutes) => minutes >= 0)
+    .sort((a, b) => b - a);
 }
 
 function getPopupReminderMinutes(reminders) {
