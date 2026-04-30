@@ -3,6 +3,7 @@ import { createNotification } from "./notifications.js";
 import { DEFAULT_SETTINGS } from "./settings.js";
 
 const CALENDAR_ICON_URL = chrome.runtime.getURL("icons/services/calendar.png");
+const DAY_MINUTES = 24 * 60;
 
 export async function listCalendars(token) {
   const response = await googleFetch(token, "/calendar/v3/users/me/calendarList", {
@@ -39,8 +40,8 @@ export async function pollCalendar(token, settings, state) {
     calendarDefaultsById.set(calendarId, await getCalendarDefaults(token, calendarId));
   }
 
-  const defaultReminderMinutes = getEarliestDefaultReminderMinutes([...calendarDefaultsById.values()]);
-  const lookAheadMinutes = Math.max((defaultReminderMinutes ?? 0) + pollIntervalMinutes, 24 * 60);
+  const defaultReminderMinutes = getLargestDefaultReminderMinutes([...calendarDefaultsById.values()]);
+  const lookAheadMinutes = Math.max((defaultReminderMinutes ?? 0) + pollIntervalMinutes, DAY_MINUTES);
   const timeMax = new Date(now.getTime() + lookAheadMinutes * 60 * 1000);
   const eventResponses = await Promise.all(calendarIds.map(async (calendarId) => {
     const response = await googleFetch(token, `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
@@ -68,22 +69,28 @@ export async function pollCalendar(token, settings, state) {
     .map(({ calendarId, event }) => ({
       calendarId,
       event,
-      startsAt: getEventStart(event),
+      timing: getEventTiming(event),
       reminderMinutes: getEventReminderMinutes(event, calendarDefaultsById.get(calendarId) ?? [])
     }))
-    .filter(({ startsAt, reminderMinutes }) => {
-      if (!startsAt || reminderMinutes === null || reminderMinutes < 0) {
+    .map(({ calendarId, event, timing, reminderMinutes }) => ({
+      calendarId,
+      event,
+      timing,
+      reminderAt: getReminderTime(timing, reminderMinutes)
+    }))
+    .filter(({ reminderAt }) => {
+      if (!reminderAt) {
         return false;
       }
 
-      const effectiveReminderMs = (reminderMinutes + pollIntervalMinutes) * 60 * 1000;
-      return startsAt >= now && startsAt.getTime() - now.getTime() <= effectiveReminderMs;
+      const pollWindowEnd = new Date(reminderAt.getTime() + pollIntervalMinutes * 60 * 1000);
+      return reminderAt <= now && now <= pollWindowEnd;
     });
 
-  for (const { calendarId, event, startsAt } of upcomingEvents) {
-    const key = `${calendarId}|${event.id}|${startsAt.toISOString()}`;
+  for (const { calendarId, event, timing } of upcomingEvents) {
+    const key = `${calendarId}|${event.id}|${timing.startsAt.toISOString()}`;
     if (!notifiedKeys.has(key)) {
-      await notifyCalendarEvent(calendarId, event, startsAt);
+      await notifyCalendarEvent(calendarId, event, timing);
       notifiedKeys.add(key);
     }
   }
@@ -113,12 +120,12 @@ export async function createTestCalendarNotification() {
   }, "https://calendar.google.com/calendar/u/0/r");
 }
 
-async function notifyCalendarEvent(calendarId, event, startsAt) {
+async function notifyCalendarEvent(calendarId, event, timing) {
   const title = event.summary || "Calendar event";
-  const time = startsAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = timing.isAllDay ? "All day" : timing.startsAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const location = event.location ? ` - ${event.location}` : "";
 
-  await createNotification(`calendar:${calendarId}:${event.id}:${startsAt.toISOString()}`, {
+  await createNotification(`calendar:${calendarId}:${event.id}:${timing.startsAt.toISOString()}`, {
     type: "basic",
     iconUrl: CALENDAR_ICON_URL,
     title: `Upcoming: ${title}`,
@@ -138,25 +145,39 @@ function getSelectedCalendarIds(settings) {
   return Array.isArray(settings.calendarIds) ? settings.calendarIds.filter(Boolean) : DEFAULT_SETTINGS.calendarIds;
 }
 
-function getEarliestDefaultReminderMinutes(defaultsList) {
+function getLargestDefaultReminderMinutes(defaultsList) {
   const reminderMinutes = defaultsList
-    .map((reminders) => getEarliestPopupReminderMinutes(reminders))
+    .flatMap((reminders) => getPopupReminderMinutes(reminders))
     .filter((minutes) => minutes !== null);
 
   if (reminderMinutes.length === 0) {
     return null;
   }
 
-  return Math.min(...reminderMinutes);
+  return Math.max(...reminderMinutes);
 }
 
-function getEventStart(event) {
-  if (!event.start?.dateTime) {
+function getEventTiming(event) {
+  if (event.start?.dateTime) {
+    const startsAt = new Date(event.start.dateTime);
+    return Number.isFinite(startsAt.getTime()) ? { startsAt, isAllDay: false } : null;
+  }
+
+  if (event.start?.date) {
+    const startsAt = parseLocalDate(event.start.date);
+    return startsAt ? { startsAt, isAllDay: true } : null;
+  }
+
+  return null;
+}
+
+function getReminderTime(timing, reminderMinutes) {
+  if (!timing || reminderMinutes === null || reminderMinutes < 0) {
     return null;
   }
 
-  const date = new Date(event.start.dateTime);
-  return Number.isFinite(date.getTime()) ? date : null;
+  const reminderAt = new Date(timing.startsAt.getTime() - reminderMinutes * 60 * 1000);
+  return Number.isFinite(reminderAt.getTime()) ? reminderAt : null;
 }
 
 function getEventReminderMinutes(event, defaultReminders) {
@@ -173,13 +194,27 @@ function getEventReminderMinutes(event, defaultReminders) {
 }
 
 function getEarliestPopupReminderMinutes(reminders) {
-  const popupMinutes = (reminders ?? [])
-    .filter((reminder) => reminder?.method === "popup" && Number.isFinite(Number(reminder.minutes)))
-    .map((reminder) => Number(reminder.minutes));
+  const popupMinutes = getPopupReminderMinutes(reminders);
 
   if (popupMinutes.length === 0) {
     return null;
   }
 
   return Math.min(...popupMinutes);
+}
+
+function getPopupReminderMinutes(reminders) {
+  return (reminders ?? [])
+    .filter((reminder) => reminder?.method === "popup" && Number.isFinite(Number(reminder.minutes)))
+    .map((reminder) => Number(reminder.minutes));
+}
+
+function parseLocalDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isFinite(date.getTime()) ? date : null;
 }
